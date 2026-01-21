@@ -20,6 +20,16 @@ const __dirname = path.dirname(__filename)
 
 const mediaStore = new Map()
 
+function getWebhookUrls() {
+  const isProd = process.env.NODE_ENV === 'production'
+  const raw = (isProd ? process.env.N8N_WEBHOOK_URLS_PROD : process.env.N8N_WEBHOOK_URLS_DEV) || ''
+  return raw
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean)
+}
+
+
 export function rememberMediaMessage(perid){
     const id = perid.key?.id
     if(!id) return
@@ -102,21 +112,35 @@ function safeJson(err){
 }
 
 async function postWebhook(eventName, payload) {
-    const url = process.env.WEBHOOK_URL
-    if(!url) return
-    try {
-        await axios.post(url, {
-            event: eventName,
-            ts: Date.now(),
-            data: payload
-        }, 
-        {
-            headers: { Authorization: `Bearer ${process.env.N8N_TOKEN}`},
-            timeout: 10_000 
-        })
-        
-    } catch (e) {
-        logger.warn({err: safeJson(e)}, 'Webhook post failed')
+    const url = getWebhookUrls()
+    if(url.length === 0) return
+
+    const body = {
+        event: eventName,
+        ts: Date.now(),
+        data: payload
+    }
+
+    const config = {
+        headers: process.env.N8N_TOKEN ? 
+        { Authorization: `Bearer ${process.env.N8N_TOKEN}` } :
+        undefined,
+        timeout: 10_000,
+    }
+
+    const result = await Promise.allSettled(
+        url.map(perdi => axios.post(perdi, body, config))
+    )
+
+    const failed = result
+        .map((r, i) => ({r, url: url[i]}))
+        .filter(x => x.r.status === 'rejected')
+
+    if (failed.length){
+        logger.warn(
+            {failed: failed.map(f => ({url: f.url, err: safeJson(f.r.reason)}))},
+            'some webhook posts failed'
+        )
     }
 }
 

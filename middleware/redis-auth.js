@@ -1,5 +1,12 @@
+if (process.env.NODE_ENV !== 'production') {
+  const dotenv = await import('dotenv')
+  dotenv.config()
+}
+
 import { BufferJSON } from "@whiskeysockets/baileys";
 import Redis from "ioredis";
+
+
 
 const redis = new Redis(process.env.REDIS_URL)
 const kCreds = (sid) => `wa:${sid}:creds`
