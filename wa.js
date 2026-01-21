@@ -1,5 +1,7 @@
-import dotenv from "dotenv"
-dotenv.config()
+if (process.env.NODE_ENV !== 'production') {
+  const dotenv = await import('dotenv')
+  dotenv.config()
+}
 
 import fs from "fs"
 import path from "path"
@@ -31,7 +33,7 @@ export function getMediaMessage(id){
 }
 
 function ensureDir(p) {
-    if(!fs.existsSync(p)) fs.mkdirSync(P, {recursive: true})
+    if(!fs.existsSync(p)) fs.mkdirSync(p, {recursive: true})
 }
 
 function guessExt(mimetype, kind) {
