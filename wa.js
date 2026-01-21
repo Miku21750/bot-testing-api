@@ -105,7 +105,11 @@ async function postWebhook(eventName, payload) {
             event: eventName,
             ts: Date.now(),
             data: payload
-        }, {timeout: 10_000 })
+        }, 
+        {
+            headers: { Authorization: `Bearer ${process.env.N8N_TOKEN}`},
+            timeout: 10_000 
+        })
         
     } catch (e) {
         logger.warn({err: safeJson(e)}, 'Webhook post failed')

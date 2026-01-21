@@ -6,6 +6,7 @@ import multer from 'multer'
 import { getLatestQRAsTerminal, getMediaMessage, getSocket, getWAStatus, requestPairingCode, sendText, startWA } from './wa.js'
 import path from "path"
 import { downloadMediaMessage } from "@whiskeysockets/baileys"
+import { requireBearer } from "./middleware/auth-http.js"
 
 const app = express()
 const upload = multer()
@@ -38,7 +39,7 @@ app.post('/wa/pair', async (req, res) => {
     }
 })
 
-app.post('/send-image', async (req, res) => {
+app.post('/send-image', requireBearer, async (req, res) => {
     const { to, url, caption } = req.body || {}
     if(!to || !url) return res.status(400).json({ok: false, message: 'to and url required'})
 
@@ -54,7 +55,7 @@ app.post('/send-image', async (req, res) => {
     }
 })
 
-app.post('/send-text', async (req, res) => {
+app.post('/send-text', requireBearer, async (req, res) => {
     const {to, text} = req.body || {}
     if (!to || !text) return res.status(400).json({ok: false, message: 'to and text are required'})
     
@@ -67,7 +68,7 @@ app.post('/send-text', async (req, res) => {
     }
 })
 
-app.get('/media/:messageId', async (req,res) => {
+app.get('/media/:messageId', requireBearer, async (req,res) => {
     const {messageId} = req.params
     const perid = getMediaMessage(messageId)
     if(!perid) return res.status(404).json({ ok: false, message: 'Media not found/expired' })
