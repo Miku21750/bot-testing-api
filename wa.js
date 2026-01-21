@@ -205,6 +205,7 @@ export async function startWA() {
                     rememberMediaMessage(m)
 
                     await postWebhook('media.received', {
+                        m,
                         remoteJid: m.key?.remoteJidAlt ?? m.key?.remoteJid,
                         messageId: m.key?.id,
                         kind: mediaInfo.kind,
@@ -217,6 +218,7 @@ export async function startWA() {
                 continue
             }else {
                 await postWebhook('messages.upsert', {
+                    m,
                     upsertType: type,
                     remoteJid: m.key?.remoteJidAlt ?? m.key?.remoteJid,
                     fromMe,
