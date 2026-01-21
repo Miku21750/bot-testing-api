@@ -205,7 +205,6 @@ export async function startWA() {
                     rememberMediaMessage(m)
 
                     await postWebhook('media.received', {
-                        m,
                         remoteJid: m.key?.remoteJidAlt ?? m.key?.remoteJid,
                         messageId: m.key?.id,
                         kind: mediaInfo.kind,
@@ -218,7 +217,6 @@ export async function startWA() {
                 continue
             }else {
                 await postWebhook('messages.upsert', {
-                    m,
                     upsertType: type,
                     remoteJid: m.key?.remoteJidAlt ?? m.key?.remoteJid,
                     fromMe,
@@ -246,8 +244,8 @@ export async function startWA() {
     })
 
     // ====== Contacts/Groups/Chats (optional) ======
-    sock.ev.on('chats.upsert', async (chats) => postWebhook('chats.upsert', chats))
-    sock.ev.on('chats.update', async (chats) => postWebhook('chats.update', chats))
+    // sock.ev.on('chats.upsert', async (chats) => postWebhook('chats.upsert', chats))
+    // sock.ev.on('chats.update', async (chats) => postWebhook('chats.update', chats))
     sock.ev.on('groups.upsert', async (groups) => postWebhook('groups.upsert', groups))
     sock.ev.on('groups.update', async (groups) => postWebhook('groups.update', groups))
     sock.ev.on('group-participants.update', async (u) => postWebhook('group-participants.update', u))
