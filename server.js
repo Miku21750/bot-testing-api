@@ -7,6 +7,7 @@ import { getLatestQRAsTerminal, getMediaMessage, getSocket, getWAStatus, request
 import path from "path"
 import { downloadMediaMessage } from "@whiskeysockets/baileys"
 import { requireBearer } from "./middleware/auth-http.js"
+import { loadMediaMessage } from "./helpers/media-store.js"
 
 const app = express()
 const upload = multer()
@@ -70,7 +71,8 @@ app.post('/send-text', requireBearer, async (req, res) => {
 
 app.get('/media/:messageId', requireBearer, async (req,res) => {
     const {messageId} = req.params
-    const perid = getMediaMessage(messageId)
+    // const perid = getMediaMessage(messageId)
+    const perid = await loadMediaMessage(messageId)
     if(!perid) return res.status(404).json({ ok: false, message: 'Media not found/expired' })
     
     try {

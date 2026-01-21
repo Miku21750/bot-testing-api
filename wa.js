@@ -7,8 +7,10 @@ import { fileURLToPath } from "url"
 import P from "pino"
 import axios from "axios"
 import QRCode from "qrcode"
-import makeWASocket, { DisconnectReason, downloadMediaMessage, useMultiFileAuthState } from "@whiskeysockets/baileys"
+import makeWASocket, { DisconnectReason, downloadMediaMessage, makeCacheableSignalKeyStore, useMultiFileAuthState } from "@whiskeysockets/baileys"
 import { extractMediaInfo } from "./helpers/wa-media-helpers.js"
+import { useRedisAuthState } from "./middleware/redis-auth.js"
+import { storeMediaMessage } from "./helpers/media-store.js"
 
 
 const __filename = fileURLToPath(import.meta.url)
@@ -130,10 +132,14 @@ export async function getLatestQRAsTerminal() {
 }
 
 export async function startWA() {
-    const { state, saveCreds } = await useMultiFileAuthState('./auth_demo')
+    // const { state, saveCreds } = await useMultiFileAuthState('./auth_demo')
+    const {state, saveCreds} = await useRedisAuthState(process.env.WA_SESSION_ID || 'main')
 
     sock = makeWASocket({
-        auth: state,
+        auth: {
+            creds: state.creds,
+            keys: makeCacheableSignalKeyStore(state.keys)
+        },
         logger,
         getMessage: async () => undefined
     })
@@ -191,6 +197,7 @@ export async function startWA() {
             )
             if(hasMedia){
                 // auto download media
+                await storeMediaMessage(m.key?.id, m, 600)
                 const mediaInfo = extractMediaInfo(m)
                 if(mediaInfo){
                     rememberMediaMessage(m)
