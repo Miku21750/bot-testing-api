@@ -3,7 +3,7 @@ dotenv.config()
 
 import express from 'express'
 import multer from 'multer'
-import { getLatestQRAsTerminal, getMediaMessage, getSocket, getWAStatus, requestPairingCode, sendText, startWA } from './wa.js'
+import { getLatestQRAsTerminal, getMediaMessage, getSocket, getWAStatus, requestPairingCode, sendAvailable, sendText, sendTyping, startWA } from './wa.js'
 import path from "path"
 import { downloadMediaMessage } from "@whiskeysockets/baileys"
 
@@ -63,6 +63,30 @@ app.post('/send-text', async (req, res) => {
         const result = await sendText(toJID, text)
         res.json({ok: true, result})
     } catch (e) {
+        res.status(500).json({ok: false, error: e?.message})
+    }
+})
+
+app.post('/send-typing', async (req, res) => {
+    const {to} = req.body || {}
+    if(!to)  return res.status(400).json({ok: false, message: 'to jid parameter are required'})
+    try {
+        const toJID = to.endsWith("@s.whatsapp.net") ? to : to + "@s.whatsapp.net"
+        const result = await sendTyping(toJID)
+        res.json({ok: true, result})
+    } catch (error) {
+        res.status(500).json({ok: false, error: e?.message})
+    }
+})
+
+app.post('/send-online', async (req, res) => {
+    const {to} = req.body || {}
+    if(!to)  return res.status(400).json({ok: false, message: 'to jid parameter are required'})
+    try {
+        const toJID = to.endsWith("@s.whatsapp.net") ? to : to + "@s.whatsapp.net"
+        const result = await sendAvailable(toJID)
+        res.json({ok: true, result})
+    } catch (error) {
         res.status(500).json({ok: false, error: e?.message})
     }
 })

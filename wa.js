@@ -192,7 +192,7 @@ export async function startWA() {
                     rememberMediaMessage(m)
 
                     await postWebhook('media.received', {
-                        remoteJid: m.key?.remoteJid,
+                        remoteJid: m.key?.remoteJidAlt ?? m.key?.remoteJid,
                         messageId: m.key?.id,
                         kind: mediaInfo.kind,
                         mimetype: mediaInfo.content?.mimetype || null,
@@ -205,7 +205,7 @@ export async function startWA() {
             }else {
                 await postWebhook('messages.upsert', {
                     upsertType: type,
-                    remoteJid,
+                    remoteJid: m.key?.remoteJidAlt ?? m.key?.remoteJid,
                     fromMe,
                     msgType,
                     text, 
@@ -243,6 +243,15 @@ export async function startWA() {
 export async function sendText(toJid, text) {
     if(!sock) throw new Error("Socket not initialized");
     return await sock.sendMessage(toJid, {text})
+}
+export async function sendTyping(toJid) {
+    if(!sock) throw new Error("Socket not initialized");
+    return await sock.sendPresenceUpdate('composing', toJid)
+}
+
+export async function sendAvailable(toJid) {
+    if(!sock) throw new Error("Socket not initialized");
+    return await sock.sendPresenceUpdate('available', toJid)
 }
 
 export async function downloadMedia(webMessageInfo) {
