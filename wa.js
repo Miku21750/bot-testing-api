@@ -231,6 +231,7 @@ export async function startWA() {
                     await postWebhook('media.received', {
                         remoteJid: m.key?.remoteJidAlt ?? m.key?.remoteJid,
                         messageId: m.key?.id,
+                        mkey: m.key,
                         kind: mediaInfo.kind,
                         mimetype: mediaInfo.content?.mimetype || null,
                         caption: mediaInfo.caption || null,
@@ -243,6 +244,7 @@ export async function startWA() {
                 await postWebhook('messages.upsert', {
                     upsertType: type,
                     remoteJid: m.key?.remoteJidAlt ?? m.key?.remoteJid,
+                    mkey: m.key,
                     fromMe,
                     msgType,
                     text, 
