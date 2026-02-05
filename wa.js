@@ -9,10 +9,11 @@ import { fileURLToPath } from "url"
 import P from "pino"
 import axios from "axios"
 import QRCode from "qrcode"
-import makeWASocket, { DisconnectReason, downloadMediaMessage, makeCacheableSignalKeyStore, useMultiFileAuthState } from "@whiskeysockets/baileys"
+import makeWASocket, { DisconnectReason, downloadMediaMessage, makeCacheableSignalKeyStore } from "@whiskeysockets/baileys"
 import { extractMediaInfo } from "./helpers/wa-media-helpers.js"
 import { useRedisAuthState } from "./middleware/redis-auth.js"
 import { storeMediaMessage } from "./helpers/media-store.js"
+import { detachAllListeners, hardCloseSocket, onSockEvent } from "./wa-connection.js"
 
 
 const __filename = fileURLToPath(import.meta.url)
@@ -157,78 +158,100 @@ export async function getLatestQRAsTerminal() {
     return await QRCode.toString(latestQR, {type: 'terminal'})
 }
 
-export async function startWA() {
-    // const { state, saveCreds } = await useMultiFileAuthState('./auth_demo')
-    const {state, saveCreds} = await useRedisAuthState(process.env.WA_SESSION_ID || 'main')
+let saveCredsFn = null;
+let sessionIdActive = null;
+let reloading = false;
+let reconnectAttempts = 0;
+const RECONNECT_BACKOFF_MS = [0, 2000, 5000, 10000];
 
-    sock = makeWASocket({
-        auth: {
-            creds: state.creds,
-            keys: makeCacheableSignalKeyStore(state.keys)
-        },
-        logger,
-        getMessage: async () => undefined
-    })
+function getReconnectDelayMs() {
+    return RECONNECT_BACKOFF_MS[Math.min(reconnectAttempts, RECONNECT_BACKOFF_MS.length - 1)];
+}
 
-    sock.ev.on('creds.update', saveCreds)
-    sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
 
-        if(qr) {
-            latestQR = qr
-            connectionState = 'qr'
-            logger.info('QR Updated (scan from phone)')
-            await postWebhook('coonection.qr', {qr})
+export function bindWAHandlers(sock) {
+    onSockEvent(sock, "creds.update", async () => {
+        try {
+            await saveCredsFn?.();
+        } catch (e) {
+            logger.warn({ err: safeJson(e) }, "Failed to save WA creds");
+        }
+    });
+
+    onSockEvent(sock, "connection.update", async (update) => {
+        const { connection, lastDisconnect, qr } = update;
+
+        if (qr) {
+            latestQR = qr;
+            connectionState = "qr";
+            logger.info("QR Updated (scan from phone)");
+            await postWebhook("connection.qr", { qr });
         }
 
-        if(connection){
-            connectionState = connection
-            logger.info({connection}, 'Connection state update')
-            await postWebhook('connection.update', {connection})
+        if (connection) {
+            connectionState = connection;
+            logger.info({ connection }, "Connection state update");
+            await postWebhook("connection.update", { connection });
         }
 
-        if(connection === 'close'){
-            const statusCode = lastDisconnect?.error?.output?.statusCode
-            logger.warn({statusCode}, 'Connection closed')
+        if (connection === "close") {
+            const statusCode =
+                lastDisconnect?.error?.output?.statusCode ||
+                lastDisconnect?.error?.output?.payload?.statusCode;
+            logger.warn({ statusCode }, "Connection closed");
 
-            if(statusCode === DisconnectReason.restartRequired){
-                logger.warn('Restart required, recreating socket...')
-                await startWA()
+            const shouldReconnect =
+                statusCode !== DisconnectReason.loggedOut &&
+                statusCode !== DisconnectReason.badSession;
+
+            if (shouldReconnect) {
+                const delayMs = getReconnectDelayMs();
+                reconnectAttempts += 1;
+                if (delayMs > 0) {
+                    logger.warn({ delayMs }, "Reconnecting after backoff");
+                    await sleep(delayMs);
+                }
+                await reloadWA({ force: true }, bindWAHandlers);
+            } else {
+                await postWebhook("connection.stopped", { statusCode });
             }
         }
 
-        if(connection === 'open'){
-            latestQR = null
-            await postWebhook('connection.open', {ok: true})
+        if (connection === "open") {
+            latestQR = null;
+            reconnectAttempts = 0;
+            await postWebhook("connection.open", { ok: true });
         }
-    })
+    });
 
-    sock.ev.on('messages.upsert', async ({type, messages}) => {
-        for(const m of messages){
-            if(!m?.message) continue
-            const fromMe = m.key?.fromMe
-            if (fromMe) continue
-            const remoteJid = m.key?.remoteJid
+    onSockEvent(sock, "messages.upsert", async ({ type, messages }) => {
+        for (const m of messages) {
+            if (!m?.message) continue;
+            const fromMe = m.key?.fromMe;
+            if (fromMe) continue;
 
-            const msgType = Object.keys(m.message || {})[0] || 'unknown'
-
-            const text = m.message?.conversation || m.message?.extendedTextMessage?.text || null
+            const msgType = Object.keys(m.message || {})[0] || "unknown";
+            const text = m.message?.conversation || m.message?.extendedTextMessage?.text || null;
 
             const hasMedia = !!(
-                m.message?.imageMessage || 
+                m.message?.imageMessage ||
                 m.message?.videoMessage ||
                 m.message?.documentMessage ||
                 m.message?.audioMessage ||
                 m.message?.stickerMessage
-            )
-            if(hasMedia){
-                // auto download media
-                await storeMediaMessage(m.key?.id, m, 600)
-                const mediaInfo = extractMediaInfo(m)
-                if(mediaInfo){
-                    rememberMediaMessage(m)
+            );
 
-                    await postWebhook('media.received', {
+            if (hasMedia) {
+                // auto download media
+                await storeMediaMessage(m.key?.id, m, 600);
+                const mediaInfo = extractMediaInfo(m);
+                if (mediaInfo) {
+                    rememberMediaMessage(m);
+
+                    await postWebhook("media.received", {
                         remoteJid: m.key?.remoteJidAlt ?? m.key?.remoteJid,
                         messageId: m.key?.id,
                         mkey: m.key,
@@ -237,46 +260,86 @@ export async function startWA() {
                         caption: mediaInfo.caption || null,
                         fileName: mediaInfo.fileName || null,
                         fetchUrl: `${process.env.PUBLIC_BASE_URL}/media/${m.key?.id}`
-                    })
+                    });
                 }
-                continue
-            }else {
-                await postWebhook('messages.upsert', {
-                    upsertType: type,
-                    remoteJid: m.key?.remoteJidAlt ?? m.key?.remoteJid,
-                    mkey: m.key,
-                    fromMe,
-                    msgType,
-                    text, 
-                    hasMedia, 
-                    messageId: m.key?.id,
-                    participant: m.key?.participant,
-                    timestamp: m.messageTimestamp
-                    
-                })
+                continue;
             }
+
+            await postWebhook("messages.upsert", {
+                upsertType: type,
+                remoteJid: m.key?.remoteJidAlt ?? m.key?.remoteJid,
+                mkey: m.key,
+                fromMe,
+                msgType,
+                text,
+                hasMedia,
+                messageId: m.key?.id,
+                participant: m.key?.participant,
+                timestamp: m.messageTimestamp
+            });
         }
-    })
+    });
 
-    sock.ev.on('messages.update', async (updates) => {
-        await postWebhook('messages.update', updates)
-    })
-    sock.ev.on('messages.delete', async (item) => {
-        await postWebhook('messages.delete', item)
-    })
+    // Optional events (enable as needed)
+    // onSockEvent(sock, "messages.update", async (updates) => postWebhook("messages.update", updates));
+    // onSockEvent(sock, "messages.delete", async (item) => postWebhook("messages.delete", item));
+    // onSockEvent(sock, "messages.reaction", async (reactions) => postWebhook("messages.reaction", reactions));
+    // onSockEvent(sock, "groups.upsert", async (groups) => postWebhook("groups.upsert", groups));
+    // onSockEvent(sock, "groups.update", async (groups) => postWebhook("groups.update", groups));
+    // onSockEvent(sock, "group-participants.update", async (u) => postWebhook("group-participants.update", u));
+}
 
-    sock.ev.on('messages.reaction', async (reactions) => {
-        await postWebhook('messages.reaction', reactions)
-    })
+export async function startWA(
+    sessionId = process.env.WA_SESSION_ID || "main",
+    bindHandlersFn = bindWAHandlers
+) {
+    sessionIdActive = sessionId;
+    const { state, saveCreds } = await useRedisAuthState(sessionId);
+    saveCredsFn = saveCreds;
 
-    // ====== Contacts/Groups/Chats (optional) ======
-    // sock.ev.on('chats.upsert', async (chats) => postWebhook('chats.upsert', chats))
-    // sock.ev.on('chats.update', async (chats) => postWebhook('chats.update', chats))
-    sock.ev.on('groups.upsert', async (groups) => postWebhook('groups.upsert', groups))
-    sock.ev.on('groups.update', async (groups) => postWebhook('groups.update', groups))
-    sock.ev.on('group-participants.update', async (u) => postWebhook('group-participants.update', u))
+    // IMPORTANT:
+    // You can still cache the key store even with Redis-backed keys.
+    // It reduces redis reads under load.
+    const cachedKeys = makeCacheableSignalKeyStore(state.keys, logger);
+    sock = makeWASocket({
+        auth: {
+            creds: state.creds,
+            keys: cachedKeys
+        },
+        logger,
+        getMessage: async () => undefined
+    });
 
-    return sock
+    // bind handlers that you define elsewhere (webhook etc)
+    if (typeof bindHandlersFn === "function") {
+        bindHandlersFn(sock);
+    }
+
+    return sock;
+}
+
+export async function reloadWA({ force = false } = {}, bindHandlersFn = bindWAHandlers) {
+    if (!sessionIdActive) sessionIdActive = process.env.WA_SESSION_ID || "main";
+    if (reloading) return sock;
+    reloading = true;
+
+    logger.warn({ force }, "Reloading WA socket");
+
+    // 1) Detach listeners first (prevents duplicates)
+    detachAllListeners(sock);
+
+    // 2) Hard restart: close ws + remove all listeners
+    if (force) {
+        hardCloseSocket(sock);
+    }
+
+    try {
+        // 3) Recreate socket fresh (same sessionId, same Redis auth)
+        await startWA(sessionIdActive, bindHandlersFn);
+        return sock;
+    } finally {
+        reloading = false;
+    }
 }
 
 export async function sendText(toJid, text) {
@@ -324,7 +387,6 @@ export async function resendMedia(toJid, webMessageInfo, overrideCaption = null)
     throw new Error("Unsupported media kind");
     
 }
-
 export function getSocket(){
     return sock
 }
