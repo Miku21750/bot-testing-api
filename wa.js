@@ -21,6 +21,19 @@ const __dirname = path.dirname(__filename)
 
 const mediaStore = new Map()
 
+import readline from "readline"
+import pino from "pino"
+
+function question(promptText) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+  return new Promise((resolve) =>
+    rl.question(promptText, (ans) => {
+      rl.close()
+      resolve(ans)
+    })
+  )
+}
+
 function getWebhookUrls() {
   const isProd = process.env.NODE_ENV === 'production'
   const raw = (isProd ? process.env.N8N_WEBHOOK_URLS_PROD : process.env.N8N_WEBHOOK_URLS_DEV) || ''
@@ -172,21 +185,46 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+let pairingInProgress = false
+let pairingMode = false
+let lastPairingCode = null
+let lastPairingCodeAt = 0
+
+export function setPairingMode(v) { pairingMode = v }
+
 export async function beginPairing({ phoneNumberE164NoPlus, deviceName = "BOT" }) {
-  if (!sock) throw new Error("Socket not initialized. Call startWA() first.")
-  if (sock.authState.creds.registered) {
-    return { alreadyPaired: true, code: null }
+  if (!sock) throw new Error("Socket not initialized")
+  if (sock.authState.creds.registered) return { alreadyPaired: true, code: null }
+
+  // ✅ If already in progress, return last code if still fresh
+  if (pairingInProgress) {
+    const fresh = Date.now() - lastPairingCodeAt < 60_000
+    return { alreadyPaired: false, code: fresh ? lastPairingCode : null, pending: true }
   }
 
-  const phone = phoneNumberE164NoPlus.replace(/^\+/, "").replace(/\s+/g, "")
-  const code = await sock.requestPairingCode(phone, deviceName)
-  return { alreadyPaired: false, code }
+  pairingInProgress = true
+  pairingMode = true
+
+  try {
+    const phone = phoneNumberE164NoPlus.replace(/^\+/, "").replace(/\s+/g, "")
+    const code = await sock.requestPairingCode(phone, deviceName)
+
+    lastPairingCode = code
+    lastPairingCodeAt = Date.now()
+
+    return { alreadyPaired: false, code, pending: false }
+  } finally {
+    setTimeout(() => { pairingInProgress = false }, 8000)
+  }
 }
 
 export function bindWAHandlers(sock) {
     onSockEvent(sock, "creds.update", async () => {
         try {
             await saveCredsFn?.();
+            if (sock?.authState?.creds?.registered) {
+                pairingMode = false
+            }
         } catch (e) {
             logger.warn({ err: safeJson(e) }, "Failed to save WA creds");
         }
@@ -211,27 +249,33 @@ export function bindWAHandlers(sock) {
         if (connection === "close") {
             const statusCode =
                 lastDisconnect?.error?.output?.statusCode ||
-                lastDisconnect?.error?.output?.payload?.statusCode;
-            logger.warn({ statusCode }, "Connection closed");
+                lastDisconnect?.error?.output?.payload?.statusCode
+
+            // ✅ if we are pairing, don’t hard reload loop
+            if (pairingMode) {
+                logger.warn({ statusCode }, "Closed during pairing; not forcing reload loop")
+                return
+            }
+            if (!sock?.authState?.creds?.registered) {
+                logger.warn({ statusCode }, "Closed during registration; not forcing reload")
+                return
+            }
 
             const shouldReconnect =
                 statusCode !== DisconnectReason.loggedOut &&
-                statusCode !== DisconnectReason.badSession;
+                statusCode !== DisconnectReason.badSession
 
             if (shouldReconnect) {
-                const delayMs = getReconnectDelayMs();
-                reconnectAttempts += 1;
-                if (delayMs > 0) {
-                    logger.warn({ delayMs }, "Reconnecting after backoff");
-                    await sleep(delayMs);
-                }
-                await reloadWA({ force: true }, bindWAHandlers);
-            } else {
-                await postWebhook("connection.stopped", { statusCode });
+                const delayMs = getReconnectDelayMs()
+                reconnectAttempts += 1
+                if (delayMs > 0) await sleep(delayMs)
+                await reloadWA({ force: true }, bindWAHandlers)
             }
         }
 
         if (connection === "open") {
+            pairingMode = false
+            pairingInProgress = false
             latestQR = null;
             reconnectAttempts = 0;
             await postWebhook("connection.open", { ok: true });
@@ -301,56 +345,116 @@ export function bindWAHandlers(sock) {
 }
 
 export async function startWA(
-    sessionId = process.env.WA_SESSION_ID || "main",
-    bindHandlersFn = bindWAHandlers
+  sessionId = process.env.WA_SESSION_ID || "main",
+  bindHandlersFn = bindWAHandlers,
+  {
+    usePairingCode = true,
+    pairingDeviceName = process.env.WA_PAIR_DEVICE_NAME || "MIKU21MD",
+    phoneNumberE164NoPlus = process.env.WA_PHONE_NO_PLUS || null,
+  } = {}
 ) {
-    sessionIdActive = sessionId;
-    const { state, saveCreds } = await useRedisAuthState(sessionId);
-    saveCredsFn = saveCreds;
+  sessionIdActive = sessionId
+  const { state, saveCreds } = await useRedisAuthState(sessionId)
+  saveCredsFn = saveCreds
 
-    // IMPORTANT:
-    // You can still cache the key store even with Redis-backed keys.
-    // It reduces redis reads under load.
-    const cachedKeys = makeCacheableSignalKeyStore(state.keys, logger);
-    sock = makeWASocket({
-        auth: {
-            creds: state.creds,
-            keys: cachedKeys
-        },
-        logger,
-        getMessage: async () => undefined
-    });
+  const cachedKeys = makeCacheableSignalKeyStore(state.keys, logger)
 
-    // bind handlers that you define elsewhere (webhook etc)
-    if (typeof bindHandlersFn === "function") {
-        bindHandlersFn(sock);
+  sock = makeWASocket({
+    printQRInTerminal: !usePairingCode,
+    syncFullHistory: true,
+    markOnlineOnConnect: true,
+    connectTimeoutMs: 60000,
+    defaultQueryTimeoutMs: 0,
+    keepAliveIntervalMs: 10000,
+    generateHighQualityLinkPreview: true,
+    patchMessageBeforeSending: (message) => {
+        const requiresPatch = !!(
+            message.buttonsMessage ||
+            message.templateMessage ||
+            message.listMessage
+        );
+        if (requiresPatch) {
+            message = {
+                viewOnceMessage: {
+                    message: {
+                        messageContextInfo: {
+                            deviceListMetadataVersion: 2,
+                            deviceListMetadata: {},
+                        },
+                        ...message,
+                    },
+                },
+            };
+        }
+
+        return message;
+    },
+    version: [99963, 950125916, 0],
+    logger: pino({
+        level: 'silent' // Set 'fatal' for production
+    }),
+    auth: {
+        creds: state.creds,
+        keys: makeCacheableSignalKeyStore(state.keys, pino().child({
+            level: 'silent',
+            stream: 'store'
+        })),
+    }
+  })
+
+  // bind handlers
+  if (typeof bindHandlersFn === "function") bindHandlersFn(sock)
+
+  // ✅ AUTO-PAIR if not registered
+  if (usePairingCode && !sock.authState.creds.registered) {
+    let phone = phoneNumberE164NoPlus
+
+    if (!phone) {
+      phone = (await question("Enter phone number (E.164 no plus, ex: 62812xxxx): ")).trim()
     }
 
-    return sock;
+    // Baileys expects E.164 WITHOUT "+"
+    phone = phone.replace(/^\+/, "").replace(/\s+/g, "")
+
+    console.log("WOI", phone)
+    const code = await sock.requestPairingCode(phone)
+    console.log("WOI", code)
+    logger.info({ phone }, "Pairing code generated. Enter this code in WhatsApp > Linked devices.")
+    console.log(`\nPAIRING CODE: ${code}\n`)
+  }
+
+  return sock
 }
 
 export async function reloadWA({ force = false } = {}, bindHandlersFn = bindWAHandlers) {
-    if (!sessionIdActive) sessionIdActive = process.env.WA_SESSION_ID || "main";
-    if (reloading) return sock;
-    reloading = true;
+  if (!sessionIdActive) sessionIdActive = process.env.WA_SESSION_ID || "main"
+  if (reloading) return sock
+  reloading = true
 
-    logger.warn({ force }, "Reloading WA socket");
+  logger.warn({ force }, "Reloading WA socket")
 
-    // 1) Detach listeners first (prevents duplicates)
-    detachAllListeners(sock);
+  try {
+    if (sock) {
+      // 1) detach known handlers (prevents duplicates)
+      detachAllListeners(sock)
 
-    // 2) Hard restart: close ws + remove all listeners
-    if (force) {
-        hardCloseSocket(sock);
+      // 2) close socket hard
+      if (force) {
+        hardCloseSocket(sock)
+      }
+
+      // ✅ 3) IMPORTANT: allow fresh socket creation
+      sock = null
+      latestQR = null
+      connectionState = "idle"
     }
 
-    try {
-        // 3) Recreate socket fresh (same sessionId, same Redis auth)
-        await startWA(sessionIdActive, bindHandlersFn);
-        return sock;
-    } finally {
-        reloading = false;
-    }
+    // 4) recreate
+    await startWA(sessionIdActive, bindHandlersFn, { usePairingCode: true })
+    return sock
+  } finally {
+    reloading = false
+  }
 }
 
 export async function sendText(toJid, text) {

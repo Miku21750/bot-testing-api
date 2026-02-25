@@ -6,7 +6,7 @@ if (process.env.NODE_ENV !== 'production') {
 
 import express from 'express'
 import multer from 'multer'
-import { beginPairing, bindWAHandlers, getLatestQRAsTerminal, getMediaMessage, getSocket, getWAStatus, requestPairingCode, sendAvailable, sendText, sendTyping, startWA, unpairWA  } from './wa.js'
+import { beginPairing, bindWAHandlers, getLatestQRAsTerminal, getMediaMessage, getSocket, getWAStatus, reloadWA, requestPairingCode, sendAvailable, sendText, sendTyping, startWA, unpairWA  } from './wa.js'
 import path from "path"
 import { downloadMediaMessage } from "@whiskeysockets/baileys"
 import { requireBearer } from "./middleware/auth-http.js"
@@ -33,8 +33,13 @@ app.get('/wa/qr', async (req,res) => {
 
 app.post("/wa/pair", async (req, res) => {
   try {
-    const { phone } = req.body // expect "62812xxxx"
-    await startWA(process.env.WA_SESSION_ID || "main", bindWAHandlers, { usePairingCode: true })
+    const { phone } = req.body
+    if (!phone) return res.status(400).json({ ok: false, error: "phone required" })
+
+    if (!getSocket()) {
+      await startWA(process.env.WA_SESSION_ID || "main", bindWAHandlers, { usePairingCode: true })
+    }
+
     const result = await beginPairing({ phoneNumberE164NoPlus: phone, deviceName: "KYZOOYMD" })
     res.json({ ok: true, ...result })
   } catch (e) {
