@@ -6,7 +6,7 @@ if (process.env.NODE_ENV !== 'production') {
 
 import express from 'express'
 import multer from 'multer'
-import { getLatestQRAsTerminal, getMediaMessage, getSocket, getWAStatus, requestPairingCode, sendAvailable, sendText, sendTyping, startWA } from './wa.js'
+import { getLatestQRAsTerminal, getMediaMessage, getSocket, getWAStatus, requestPairingCode, sendAvailable, sendText, sendTyping, startWA, unpairWA  } from './wa.js'
 import path from "path"
 import { downloadMediaMessage } from "@whiskeysockets/baileys"
 import { requireBearer } from "./middleware/auth-http.js"
@@ -31,17 +31,32 @@ app.get('/wa/qr', async (req,res) => {
     res.type('text/plain').send(qr)
 })
 
-app.post('/wa/pair', async (req, res) => {
-    const { phone } = req.body || {}
-    if(!phone) return res.status(400).json({ok: false, message: 'phone is required (E.164 without +)'})
-
-    try {
-        const code = await requestPairingCode(phone)
-        res.json({ok: true, code})
-    }catch(e){
-        res.status(500).json({ ok: false, error: e?.message})
-    }
+app.post("/wa/pair", async (req, res) => {
+  try {
+    const { phone } = req.body // expect "62812xxxx"
+    await startWA(process.env.WA_SESSION_ID || "main", bindWAHandlers, { usePairingCode: true })
+    const result = await beginPairing({ phoneNumberE164NoPlus: phone, deviceName: "KYZOOYMD" })
+    res.json({ ok: true, ...result })
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e?.message })
+  }
 })
+
+app.post('/wa/unpair', requireBearer, async (req, res) => {
+    try {
+        await unpairWA();
+
+        res.json({
+            ok: true,
+            message: "WhatsApp session unpaired. Please re-pair."
+        });
+    } catch (e) {
+        res.status(500).json({
+            ok: false,
+            error: e?.message
+        });
+    }
+});
 
 app.post('/send-image', requireBearer, async (req, res) => {
     const { to, url, caption } = req.body || {}

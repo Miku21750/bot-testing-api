@@ -59,3 +59,13 @@ export async function useRedisAuthState(sessionId) {
     return {state, saveCreds, redis}
 
 }
+
+export async function deleteRedisSession(sessionId) {
+    const prefix = `baileys:${sessionId}`;
+
+    const keys = await redis.keys(`${prefix}*`);
+
+    if (keys.length > 0) {
+        await redis.del(...keys);
+    }
+}

@@ -11,7 +11,7 @@ import axios from "axios"
 import QRCode from "qrcode"
 import makeWASocket, { DisconnectReason, downloadMediaMessage, makeCacheableSignalKeyStore } from "@whiskeysockets/baileys"
 import { extractMediaInfo } from "./helpers/wa-media-helpers.js"
-import { useRedisAuthState } from "./middleware/redis-auth.js"
+import { useRedisAuthState, deleteRedisSession } from "./middleware/redis-auth.js"
 import { storeMediaMessage } from "./helpers/media-store.js"
 import { detachAllListeners, hardCloseSocket, onSockEvent } from "./wa-connection.js"
 
@@ -170,6 +170,17 @@ function getReconnectDelayMs() {
 
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+export async function beginPairing({ phoneNumberE164NoPlus, deviceName = "BOT" }) {
+  if (!sock) throw new Error("Socket not initialized. Call startWA() first.")
+  if (sock.authState.creds.registered) {
+    return { alreadyPaired: true, code: null }
+  }
+
+  const phone = phoneNumberE164NoPlus.replace(/^\+/, "").replace(/\s+/g, "")
+  const code = await sock.requestPairingCode(phone, deviceName)
+  return { alreadyPaired: false, code }
 }
 
 export function bindWAHandlers(sock) {
@@ -389,4 +400,37 @@ export async function resendMedia(toJid, webMessageInfo, overrideCaption = null)
 }
 export function getSocket(){
     return sock
+}
+
+export async function unpairWA() {
+    if (!sock) throw new Error("Socket not initialized");
+
+    logger.warn("Unpairing / logging out WhatsApp session...");
+
+    try {
+        // 1. Logout from WhatsApp
+        await sock.logout();
+    } catch (e) {
+        logger.warn({ err: e?.message }, "Logout failed (maybe already disconnected)");
+    }
+
+    try {
+        // 2. Close socket hard
+        hardCloseSocket(sock);
+    } catch (e) {
+        logger.warn({ err: e?.message }, "Hard close failed");
+    }
+
+    // 3. Clear local state
+    sock = null;
+    latestQR = null;
+    connectionState = "idle";
+    reconnectAttempts = 0;
+
+    // 4. Delete session from Redis
+    if (sessionIdActive) {
+        await deleteRedisSession(sessionIdActive);
+    }
+
+    return true;
 }
