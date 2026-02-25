@@ -6,7 +6,7 @@ if (process.env.NODE_ENV !== 'production') {
 
 import express from 'express'
 import multer from 'multer'
-import { getLatestQRAsTerminal, getMediaMessage, getSocket, getWAStatus, requestPairingCode, sendAvailable, sendText, sendTyping, startWA, unpairWA  } from './wa.js'
+import { beginPairing, bindWAHandlers, getLatestQRAsTerminal, getMediaMessage, getSocket, getWAStatus, requestPairingCode, sendAvailable, sendText, sendTyping, startWA, unpairWA  } from './wa.js'
 import path from "path"
 import { downloadMediaMessage } from "@whiskeysockets/baileys"
 import { requireBearer } from "./middleware/auth-http.js"
