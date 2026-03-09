@@ -11,6 +11,7 @@ import path from "path"
 import { downloadMediaMessage } from "@whiskeysockets/baileys"
 import { requireBearer } from "./middleware/auth-http.js"
 import { loadMediaMessage } from "./helpers/media-store.js"
+import { downloadMessageMediaBuffer, getAudioNode } from './helpers/wa-download-media.js'
 
 const app = express()
 const upload = multer()
@@ -148,6 +149,82 @@ app.get('/media/:messageId', async (req,res) => {
     } catch (e) {
     console.error('[ERR] /media:', e)
         res.status(500).json({ ok: false, error: e?.message })
+    }
+})
+
+app.get("/media/audio/:messageId", async (req,res) => {
+    const { messageId } = req.params
+
+    try {
+        const perid = await loadMediaMessage(messageId)
+        if(!perid) 
+            return res.status(404).json({ ok: false, message: "Audio not found/expired" })
+        
+        const audioNode = getAudioNode(perid)
+        if(!audioNode) return res.status(400).json({ ok: false, message: "Message is not an audio/voice note" })
+        const buffer = await downloadMessageMediaBuffer(perid)
+
+        const mimetype = audioNode.mimetype || "audio/ogg"        
+        const ext = 
+            mimetype.includes("ogg") ? "ogg" :
+            mimetype.includes("mpeg") ? "mp3" :
+            mimetype.includes("mp4") ? "m4a":
+            "bin"
+        const filename = audioNode.ptt 
+            ? `voice-note-${messageId}.${ext}`
+            : `audio-${messageId}.${ext}`
+        res.setHeader("Content-Type", mimetype)
+        res.setHeader("Content-Length", buffer.length)
+        res.setHeader("Content-Disposition", `attachment; filename="${filename}"`)
+
+        return res.send(buffer);
+    } catch (e) {
+        console.error("GET /media/audio/:messageId error:", e)
+        return res.status(500).json({
+            ok: false,
+            error: e?.message || "Unknown error"
+        })
+    }
+})
+
+app.get("/media/audio-base64/:messageId", async (req, res) => {
+    const { messageId } = req.params
+
+    try {
+        const perid = await loadMediaMessage(messageId)
+        if (!perid) {
+            return res.status(404).json({
+                ok: false,
+                message: "Audio not found/expired"
+            })
+        }
+
+        const audioNode = getAudioNode(perid)
+        if (!audioNode) {
+            return res.status(400).json({
+                ok: false,
+                message: "Message is not an audio/voice note"
+            })
+        }
+
+        const buffer = await downloadMessageMediaBuffer(perid)
+
+        return res.json({
+            ok: true,
+            messageId,
+            kind: audioNode.ptt ? "voice-note" : "audio",
+            ptt: !!audioNode.ptt,
+            seconds: audioNode.seconds || null,
+            mimetype: audioNode.mimetype || "audio/ogg",
+            bytes: buffer.length,
+            base64: buffer.toString("base64")
+        })
+    } catch (e) {
+        console.error("GET /media/audio-base64/:messageId error:", e)
+        return res.status(500).json({
+            ok: false,
+            error: e?.message || "Unknown error"
+        })
     }
 })
 app.use('/download', express.static(path.resolve('./download')))

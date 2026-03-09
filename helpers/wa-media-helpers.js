@@ -24,7 +24,16 @@ export function extractMediaInfo(webMessage) {
         }
     }
     if (msg.audioMessage) {
-        return { kind: 'audio', content: msg.audioMessage, caption: null }
+        const isVoiceNote = !!msg.audioMessage.ptt
+
+        return {
+            kind: isVoiceNote ? 'voice-note' : 'audio',
+            content: msg.audioMessage,
+            caption: null,
+            isVoiceNote,
+            seconds: msg.audioMessage.seconds || null,
+            ptt: !!msg.audioMessage.ptt
+        }
     }
     if (msg.stickerMessage) {
         return { kind: 'sticker', content: msg.stickerMessage, caption: null }

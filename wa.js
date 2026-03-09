@@ -305,7 +305,6 @@ export function bindWAHandlers(sock) {
                 const mediaInfo = extractMediaInfo(m);
                 if (mediaInfo) {
                     rememberMediaMessage(m);
-
                     await postWebhook("media.received", {
                         remoteJid: m.key?.remoteJidAlt ?? m.key?.remoteJid,
                         messageId: m.key?.id,
@@ -314,6 +313,19 @@ export function bindWAHandlers(sock) {
                         mimetype: mediaInfo.content?.mimetype || null,
                         caption: mediaInfo.caption || null,
                         fileName: mediaInfo.fileName || null,
+
+                        ptt: mediaInfo.ptt || false,
+                        isVoiceNote: mediaInfo.isVoiceNote || false,
+                        seconds: mediaInfo.seconds || null,
+                        audioFetchUrl:
+                            mediaInfo.kind === "audio" || mediaInfo.kind === "voice-note"
+                                ? `${process.env.PUBLIC_BASE_URL}/media/audio/${m.key?.id}`
+                                : null,
+                        audioBase64Url:
+                            mediaInfo.kind === "audio" || mediaInfo.kind === "voice-note"
+                                ? `${process.env.PUBLIC_BASE_URL}/media/audio-base64/${m.key?.id}`
+                                : null,
+
                         fetchUrl: `${process.env.PUBLIC_BASE_URL}/media/${m.key?.id}`
                     });
                 }
