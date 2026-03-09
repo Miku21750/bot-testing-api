@@ -40,7 +40,7 @@ app.post("/wa/pair", async (req, res) => {
       await startWA(process.env.WA_SESSION_ID || "main", bindWAHandlers, { usePairingCode: true })
     }
 
-    const result = await beginPairing({ phoneNumberE164NoPlus: phone, deviceName: "KYZOOYMD" })
+    const result = await beginPairing({ phoneNumberE164NoPlus: phone })
     res.json({ ok: true, ...result })
   } catch (e) {
     res.status(500).json({ ok: false, error: e?.message })

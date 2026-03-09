@@ -207,7 +207,7 @@ export async function beginPairing({ phoneNumberE164NoPlus, deviceName = "BOT" }
 
   try {
     const phone = phoneNumberE164NoPlus.replace(/^\+/, "").replace(/\s+/g, "")
-    const code = await sock.requestPairingCode(phone, deviceName)
+    const code = await sock.requestPairingCode(phone)
 
     lastPairingCode = code
     lastPairingCodeAt = Date.now()
