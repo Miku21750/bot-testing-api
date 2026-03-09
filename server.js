@@ -118,16 +118,24 @@ app.post('/send-online', async (req, res) => {
 
 app.get('/media/:messageId', async (req,res) => {
     const {messageId} = req.params
+    console.log('[1] request mediaId =', messageId)
     // const perid = getMediaMessage(messageId)
+    const perdisock = getSocket()
+    if(!perdisock) return res.status(503).json({ ok: false, error: 'WA socket not available' })
     const perid = await loadMediaMessage(messageId)
+    console.log('[2] loaded from redis =', !!perid)
     if(!perid) return res.status(404).json({ ok: false, message: 'Media not found/expired' })
     
     try {
-        const buffer = await downloadMediaMessage(perid, 'buffer', {}, {logger: getSocket()?.logger})
+        console.log('[3] start downloadMediaMessage')
+        const buffer = await downloadMediaMessage(perid, 'buffer', {})
+        console.log('[4] download finished, size =', buffer?.length)
         const msg = perid.message
         const mediaNode = msg?.imageMessage || msg?.videoMessage || msg?.documentMessage || msg?.audioMessage || msg?.stickerMessage ||
       msg?.viewOnceMessage?.message?.imageMessage ||
       msg?.viewOnceMessage?.message?.videoMessage
+
+        console.log('[5] mediaNode =', !!mediaNode)
 
         const mimetype = mediaNode?.mimetype || 'application/octet-stream'
         res.setHeader('Content-Type', mimetype)
@@ -138,6 +146,7 @@ app.get('/media/:messageId', async (req,res) => {
         }
         res.send(buffer)
     } catch (e) {
+    console.error('[ERR] /media:', e)
         res.status(500).json({ ok: false, error: e?.message })
     }
 })
