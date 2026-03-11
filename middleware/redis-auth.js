@@ -7,8 +7,9 @@ import { BufferJSON } from "@whiskeysockets/baileys";
 import Redis from "ioredis";
 
 
-
-const redis = new Redis(process.env.REDIS_URL)
+const redisurl = process.env.REDIS_URL + process.env.DB_REDIS_LEVEL
+const redis = new Redis(redisurl)
+console.log("REDIS URL", redisurl)
 const kCreds = (sid) => `wa:${sid}:creds`
 const kKey = (sid, type, id) => `wa:${sid}:keys:${type}:${id}`
 

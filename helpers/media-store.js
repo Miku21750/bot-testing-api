@@ -5,7 +5,8 @@ if (process.env.NODE_ENV !== 'production') {
 
 import { BufferJSON, proto } from "@whiskeysockets/baileys";
 import Redis from "ioredis";
-const redis = new Redis(process.env.REDIS_URL)
+const redisurl = process.env.REDIS_URL + process.env.DB_REDIS_LEVEL
+const redis = new Redis(redisurl)
 
 const kMedia = (id) => `wa:media:${id}`
 
