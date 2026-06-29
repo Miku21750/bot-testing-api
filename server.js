@@ -8,7 +8,13 @@ import express from 'express'
 import multer from 'multer'
 import { beginPairing, bindWAHandlers, getLatestQRAsTerminal, getMediaMessage, getSocket, getWAStatus, reloadWA, requestPairingCode, sendAvailable, sendText, sendTyping, startWA, unpairWA  } from './wa.js'
 import path from "path"
-import { downloadMediaMessage } from "@whiskeysockets/baileys"
+import baileys from "@whiskeysockets/baileys";
+const {
+  downloadMediaMessage,
+  downloadContentFromMessage,
+  proto,
+  BufferJSON
+} = baileys;
 import { requireBearer } from "./middleware/auth-http.js"
 import { loadMediaMessage } from "./helpers/media-store.js"
 import { downloadMessageMediaBuffer, getAudioNode } from './helpers/wa-download-media.js'

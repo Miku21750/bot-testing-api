@@ -9,10 +9,23 @@ import { fileURLToPath } from "url"
 import P from "pino"
 import axios from "axios"
 import QRCode from "qrcode"
-import makeWASocket, { DisconnectReason, downloadMediaMessage, makeCacheableSignalKeyStore } from "@whiskeysockets/baileys"
+
+import baileys from "@whiskeysockets/baileys"
+
+const {
+  default: makeWASocket,
+  DisconnectReason,
+  downloadMediaMessage,
+  downloadContentFromMessage,
+  makeCacheableSignalKeyStore,
+  useMultiFileAuthState,
+  fetchLatestBaileysVersion,
+  Browsers,
+  proto
+} = baileys
 import { extractMediaInfo } from "./helpers/wa-media-helpers.js"
 import { useRedisAuthState, deleteRedisSession } from "./middleware/redis-auth.js"
-import { storeMediaMessage } from "./helpers/media-store.js"
+import { downloadMessageMediaBuffer, storeMediaMessage } from "./helpers/media-store.js"
 import { detachAllListeners, hardCloseSocket, onSockEvent } from "./wa-connection.js"
 
 
@@ -23,6 +36,7 @@ const mediaStore = new Map()
 
 import readline from "readline"
 import pino from "pino"
+// import { buildLottieSticker } from "./helpers/lottie-builder.js"
 
 function question(promptText) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
@@ -92,7 +106,7 @@ export async function downloadIncomingMedia(webMessageInfo) {
     const fileBase = `${remoteJid}_${messageId}${ext}`
     const filePath = path.join(downloadsDir, fileBase)
     
-    const buffer = await downloadMediaMessage(webMessageInfo, 'buffer', {}, logger)
+    const buffer = await downloadMessageMediaBuffer(webMessageInfo, 'buffer', {}, logger)
 
     fs.writeFileSync(filePath, buffer)
 
@@ -492,6 +506,64 @@ export async function downloadMedia(webMessageInfo) {
         { logger }
     )
     return buffer
+}
+
+// export async function sendLottie(toJid, {
+//     buffer = null,
+//     imagePath = null,
+//     mime = null,
+//     template = "default"
+// }) {
+//     if (!sock) throw new Error("Socket not initialized")
+
+//     if (!buffer && !imagePath) {
+//         throw new Error("buffer or imagePath is required")
+//     }
+
+//     try {
+//         const tempDir = path.join(__dirname, "temp")
+//         ensureDir(tempDir)
+
+//         const fileName = `${Date.now()}_${Math.random().toString(36).slice(2)}.was`
+//         const outputPath = path.join(tempDir, fileName)
+
+//         // pilih template (biar scalable nanti)
+//         const baseFolder = path.resolve(__dirname, `lottie/${template}`)
+
+//         await buildLottieSticker({
+//             baseFolder,
+//             buffer,
+//             imagePath,
+//             mime,
+//             output: outputPath
+//         })
+
+//         const stickerBuffer = fs.readFileSync(outputPath)
+
+//         await sock.sendMessage(toJid, {
+//             sticker: stickerBuffer,
+//             mimetype: "application/was"
+//         })
+
+//         // cleanup file biar VPS nggak penuh
+//         fs.unlink(outputPath, () => {})
+
+//         return true
+//     } catch (err) {
+//         logger.error({ err }, "sendLottie failed")
+//         throw err
+//     }
+// }
+
+export async function getProfilePictureURL(Jid) {
+    try {
+        if(!sock) throw new Error("Socket not initialized");
+        const url = await sock.profilePictureUrl(Jid, image);
+        if (url && !url.includes('undefined') && !url.includes('null')) {
+            return url;
+        }
+    } catch {}
+    return 'https://telegra.ph/file/a059a6a734ed202c879d3.jpg';
 }
 
 export async function requestPairingCode(phoneNumberE164NoPlus) {

@@ -3,12 +3,33 @@ if (process.env.NODE_ENV !== 'production') {
   dotenv.config()
 }
 
-import { BufferJSON } from "@whiskeysockets/baileys";
+import baileys from "@whiskeysockets/baileys";
 import Redis from "ioredis";
+
+const { BufferJSON, initAuthCreds } = baileys;
 
 
 const redisurl = process.env.REDIS_URL + process.env.DB_REDIS_LEVEL
-const redis = new Redis(redisurl)
+if (!redisurl) {
+  throw new Error("REDIS_URL is missing")
+}
+
+const redis = new Redis(redisurl, {
+  maxRetriesPerRequest: null,
+  enableReadyCheck: false,
+  retryStrategy(times) {
+    return Math.min(times * 100, 3000);
+  }
+});
+
+redis.on("connect", () => {
+  console.log("[Redis] connected");
+});
+
+redis.on("error", (err) => {
+  console.error("[Redis] error:", err.message);
+});
+
 const kCreds = (sid) => `wa:${sid}:creds`
 const kKey = (sid, type, id) => `wa:${sid}:keys:${type}:${id}`
 
@@ -47,7 +68,7 @@ export async function useRedisAuthState(sessionId) {
 
     //state shape baileys expected
     const state = {
-        creds: creds || (await import('@whiskeysockets/baileys')).initAuthCreds(), 
+        creds: creds || initAuthCreds(),
         keys
     }
 
@@ -61,11 +82,11 @@ export async function useRedisAuthState(sessionId) {
 }
 
 export async function deleteRedisSession(sessionId) {
-    const prefix = `baileys:${sessionId}`;
+  const prefix = `wa:${sessionId}:`;
 
-    const keys = await redis.keys(`${prefix}*`);
+  const keys = await redis.keys(`${prefix}*`);
 
-    if (keys.length > 0) {
-        await redis.del(...keys);
-    }
+  if (keys.length > 0) {
+    await redis.del(...keys);
+  }
 }
