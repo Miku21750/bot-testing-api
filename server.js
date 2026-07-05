@@ -8,13 +8,12 @@ import express from 'express'
 import multer from 'multer'
 import { beginPairing, bindWAHandlers, getLatestQRAsTerminal, getMediaMessage, getSocket, getWAStatus, reloadWA, requestPairingCode, sendAvailable, sendText, sendTyping, startWA, unpairWA  } from './wa.js'
 import path from "path"
-import baileys from "@whiskeysockets/baileys";
-const {
-  downloadMediaMessage,
+import {
+  BufferJSON,
   downloadContentFromMessage,
+  downloadMediaMessage,
   proto,
-  BufferJSON
-} = baileys;
+} from "@whiskeysockets/baileys"
 import { requireBearer } from "./middleware/auth-http.js"
 import { loadMediaMessage } from "./helpers/media-store.js"
 import { downloadMessageMediaBuffer, getAudioNode } from './helpers/wa-download-media.js'
@@ -240,5 +239,19 @@ const PORT = process.env.PORT || 3333
 // console.log(process.env)
 app.listen(PORT, async () => {
     console.log(`API listening on http://localhost:${PORT}`)
-    await startWA()
+    try {
+    await startWA(
+      process.env.WA_SESSION_ID || "main",
+      bindWAHandlers,
+      {
+        usePairingCode: false,
+      }
+    )
+  } catch (error) {
+    console.error(
+      "Failed to initialize WhatsApp:",
+      error
+    )
+  }
+
 })

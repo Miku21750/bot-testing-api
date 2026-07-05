@@ -10,19 +10,17 @@ import P from "pino"
 import axios from "axios"
 import QRCode from "qrcode"
 
-import baileys from "@whiskeysockets/baileys"
-
-const {
-  default: makeWASocket,
-  DisconnectReason,
-  downloadMediaMessage,
-  downloadContentFromMessage,
-  makeCacheableSignalKeyStore,
-  useMultiFileAuthState,
-  fetchLatestBaileysVersion,
+import {
   Browsers,
-  proto
-} = baileys
+  DisconnectReason,
+  downloadContentFromMessage,
+  downloadMediaMessage,
+  fetchLatestBaileysVersion,
+  makeCacheableSignalKeyStore,
+  makeWASocket,
+  proto,
+  useMultiFileAuthState,
+} from "@whiskeysockets/baileys"
 import { extractMediaInfo } from "./helpers/wa-media-helpers.js"
 import { useRedisAuthState, deleteRedisSession } from "./middleware/redis-auth.js"
 import { downloadMessageMediaBuffer, storeMediaMessage } from "./helpers/media-store.js"
@@ -37,6 +35,67 @@ const mediaStore = new Map()
 import readline from "readline"
 import pino from "pino"
 // import { buildLottieSticker } from "./helpers/lottie-builder.js"
+
+function hasUsableAuth(creds) {
+  if (!creds) return false
+
+  // Session Baileys hasil pairing biasa.
+  if (creds.registered === true) {
+    return true
+  }
+
+  /*
+   * Browser-imported auth dapat memiliki registered=false,
+   * tetapi credential material dan identitas akun sudah tersedia.
+   */
+  return Boolean(
+    creds.me?.id &&
+    creds.noiseKey?.private &&
+    creds.noiseKey?.public &&
+    creds.signedIdentityKey?.private &&
+    creds.signedIdentityKey?.public &&
+    creds.signedPreKey?.keyPair?.private &&
+    creds.signedPreKey?.keyPair?.public &&
+    creds.advSecretKey
+  )
+}
+
+// debug
+function describeAuth(creds) {
+  return {
+    registered: creds?.registered === true,
+    jid: creds?.me?.id || null,
+
+    hasNoiseKey: Boolean(
+      creds?.noiseKey?.private &&
+      creds?.noiseKey?.public
+    ),
+
+    hasSignedIdentityKey: Boolean(
+      creds?.signedIdentityKey?.private &&
+      creds?.signedIdentityKey?.public
+    ),
+
+    hasSignedPreKey: Boolean(
+      creds?.signedPreKey?.keyPair?.private &&
+      creds?.signedPreKey?.keyPair?.public
+    ),
+
+    hasAdvSecretKey: Boolean(creds?.advSecretKey),
+    hasAccount: Boolean(creds?.account),
+
+    hasBrowserAuth: Boolean(
+      creds?.browserAuth ||
+      creds?.browserIdentity ||
+      creds?.activeLogin ||
+      creds?.webAuth
+    ),
+
+    topLevelFields: creds
+      ? Object.keys(creds).sort()
+      : [],
+  }
+}
 
 function question(promptText) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
@@ -173,11 +232,24 @@ async function postWebhook(eventName, payload) {
 }
 
 export function getWAStatus() {
-    return {
-        connectionState,
-        hasSocket: !!sock,
-        hasQR: !!latestQR
-    }
+  const creds = sock?.authState?.creds
+
+  return {
+    connectionState,
+    hasSocket: Boolean(sock),
+    hasQR: Boolean(latestQR),
+
+    auth: {
+      usable: hasUsableAuth(creds),
+      registered: creds?.registered === true,
+      jid: creds?.me?.id || null,
+    },
+
+    pairing: {
+      active: pairingMode,
+      inProgress: pairingInProgress,
+    },
+  }
 }
 
 export async function getLatestQRAsTerminal() {
@@ -208,7 +280,12 @@ export function setPairingMode(v) { pairingMode = v }
 
 export async function beginPairing({ phoneNumberE164NoPlus, deviceName = "BOT" }) {
   if (!sock) throw new Error("Socket not initialized")
-  if (sock.authState.creds.registered) return { alreadyPaired: true, code: null }
+  if (hasUsableAuth(sock.authState.creds)) {
+    return {
+      alreadyPaired: true,
+      code: null
+    }
+  }
 
   // ✅ If already in progress, return last code if still fresh
   if (pairingInProgress) {
@@ -236,7 +313,7 @@ export function bindWAHandlers(sock) {
     onSockEvent(sock, "creds.update", async () => {
         try {
             await saveCredsFn?.();
-            if (sock?.authState?.creds?.registered) {
+            if (hasUsableAuth(sock?.authState?.creds)) {
                 pairingMode = false
             }
         } catch (e) {
@@ -270,7 +347,7 @@ export function bindWAHandlers(sock) {
                 logger.warn({ statusCode }, "Closed during pairing; not forcing reload loop")
                 return
             }
-            if (!sock?.authState?.creds?.registered) {
+            if (!hasUsableAuth(sock?.authState?.creds)) {
                 logger.warn({ statusCode }, "Closed during registration; not forcing reload")
                 return
             }
@@ -374,7 +451,7 @@ export async function startWA(
   sessionId = process.env.WA_SESSION_ID || "main",
   bindHandlersFn = bindWAHandlers,
   {
-    usePairingCode = true,
+    usePairingCode = false,
     pairingDeviceName = process.env.WA_PAIR_DEVICE_NAME || "MIKU21MD",
     phoneNumberE164NoPlus = process.env.WA_PHONE_NO_PLUS || null,
   } = {}
@@ -430,9 +507,16 @@ export async function startWA(
 
   // bind handlers
   if (typeof bindHandlersFn === "function") bindHandlersFn(sock)
-
+    logger.info(
+    {
+        sessionId,
+        auth: describeAuth(state.creds),
+        usePairingCode,
+    },
+    "WhatsApp auth loaded"
+    )
   // ✅ AUTO-PAIR if not registered
-  if (usePairingCode && !sock.authState.creds.registered) {
+  if (usePairingCode && !hasUsableAuth(sock.authState.creds)) {
     let phone = phoneNumberE164NoPlus
 
     if (!phone) {
@@ -447,6 +531,16 @@ export async function startWA(
     console.log("WOI", code)
     logger.info({ phone }, "Pairing code generated. Enter this code in WhatsApp > Linked devices.")
     console.log(`\nPAIRING CODE: ${code}\n`)
+  } else if (hasUsableAuth(sock.authState.creds)) {
+  logger.info(
+    {
+      sessionId,
+      jid: sock.authState.creds.me?.id,
+      registered:
+        sock.authState.creds.registered,
+    },
+    "Existing WhatsApp auth detected; pairing skipped"
+    )
   }
 
   return sock
@@ -476,7 +570,7 @@ export async function reloadWA({ force = false } = {}, bindHandlersFn = bindWAHa
     }
 
     // 4) recreate
-    await startWA(sessionIdActive, bindHandlersFn, { usePairingCode: true })
+    await startWA(sessionIdActive, bindHandlersFn, { usePairingCode: false })
     return sock
   } finally {
     reloading = false

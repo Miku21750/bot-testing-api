@@ -3,3 +3,4 @@ node_modules
 download
 .env
 .env
+/baileys_auth

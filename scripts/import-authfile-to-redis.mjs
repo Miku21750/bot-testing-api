@@ -1,140 +1,246 @@
-import baileys from '@whiskeysockets/baileys'
+import fs from "node:fs/promises"
+import path from "node:path"
 
 import {
-  useRedisAuthState,
-} from '../middleware/redis-auth.js'
-
-const {
   useMultiFileAuthState,
-} = baileys
+} from "@whiskeysockets/baileys"
 
-const sessionId = process.argv[2] || 'main'
-const authDirectory = process.argv[3] || './baileys_auth'
+import {
+  deleteRedisSession,
+  useRedisAuthState,
+  writeRedisAuthCreds,
+} from "../middleware/redis-auth.js"
+
+const sessionId =
+  process.argv[2] || "main"
+
+const authDirectory = path.resolve(
+  process.argv[3] || "./baileys_auth"
+)
+
+const KNOWN_KEY_TYPES = [
+  "app-state-sync-key",
+  "app-state-sync-version",
+  "sender-key-memory",
+  "sender-key",
+  "lid-mapping",
+  "pre-key",
+  "session",
+]
+
+function detectKeyType(fileName) {
+  if (
+    fileName === "creds.json" ||
+    !fileName.endsWith(".json")
+  ) {
+    return null
+  }
+
+  const base = fileName.slice(
+    0,
+    -".json".length
+  )
+
+  const type = KNOWN_KEY_TYPES.find(
+    candidate =>
+      base.startsWith(`${candidate}-`)
+  )
+
+  if (!type) {
+    return null
+  }
+
+  return {
+    type,
+    id: base.slice(type.length + 1),
+  }
+}
+
+function assertBrowserAuthCreds(creds) {
+  const missing = []
+
+  if (!creds.me?.id) {
+    missing.push("me.id")
+  }
+
+  if (!creds.me?.lid) {
+    missing.push("me.lid")
+  }
+
+  if (!creds.account) {
+    missing.push("account")
+  }
+
+  if (!creds.signalIdentities?.length) {
+    missing.push("signalIdentities")
+  }
+
+  if (!creds.platform) {
+    missing.push("platform")
+  }
+
+  if (!creds.noiseKey) {
+    missing.push("noiseKey")
+  }
+
+  if (!creds.signedIdentityKey) {
+    missing.push("signedIdentityKey")
+  }
+
+  if (!creds.signedPreKey) {
+    missing.push("signedPreKey")
+  }
+
+  if (!creds.advSecretKey) {
+    missing.push("advSecretKey")
+  }
+
+  if (missing.length > 0) {
+    throw new Error(
+      `Browser auth tidak lengkap. Field hilang: ${missing.join(", ")}`
+    )
+  }
+}
 
 async function main() {
-  console.log(`Reading file auth from: ${authDirectory}`)
-  console.log(`Importing into Redis session: ${sessionId}`)
+  console.log({
+    sessionId,
+    authDirectory,
+  })
 
-  const fileAuth = await useMultiFileAuthState(authDirectory)
-  const redisAuth = await useRedisAuthState(sessionId)
-
-  if (!fileAuth.state.creds.registered) {
-    throw new Error(
-      'File auth belum registered. Jalankan extractor dan pastikan WhatsApp Web sudah login.'
-    )
-  }
-
-  /*
-   * Import credentials utama.
-   *
-   * Object.assign dipakai agar referensi redisAuth.state.creds
-   * tidak diganti sepenuhnya. Ini lebih aman untuk implementasi
-   * saveCreds yang menangkap referensi object tersebut.
-   */
-  Object.assign(
-    redisAuth.state.creds,
-    fileAuth.state.creds
-  )
-
-  await redisAuth.saveCreds()
-
-  console.log('Credentials imported.')
-
-  /*
-   * Jenis Signal key yang umum digunakan Baileys.
-   *
-   * Kita membaca ID file berdasarkan nama file yang dihasilkan
-   * useMultiFileAuthState, lalu meminta key melalui state.keys.get().
-   */
-  const fs = await import('node:fs/promises')
-  const path = await import('node:path')
-
-  const files = await fs.readdir(authDirectory)
-
-  const keyFiles = files.filter(
-    filename => filename !== 'creds.json' && filename.endsWith('.json')
-  )
-
-  const groupedKeys = new Map()
-
-  for (const filename of keyFiles) {
-    const withoutExtension = filename.slice(0, -'.json'.length)
-
-    /*
-     * Nama file multi-file auth berbentuk:
-     *
-     * pre-key-123.json
-     * session-628xxx.0.json
-     * sender-key-628xxx--group-id.json
-     * app-state-sync-key-ABC.json
-     *
-     * Jenis key harus dicocokkan dari prefix yang dikenal.
-     */
-    const knownTypes = [
-      'pre-key',
-      'session',
-      'sender-key',
-      'sender-key-memory',
-      'app-state-sync-key',
-      'app-state-sync-version',
-    ]
-
-    const type = knownTypes.find(candidate =>
-      withoutExtension.startsWith(`${candidate}-`)
+  const fileAuth =
+    await useMultiFileAuthState(
+      authDirectory
     )
 
-    if (!type) {
-      console.warn(`Skipping unknown auth file: ${filename}`)
-      continue
+  const creds = fileAuth.state.creds
+
+  console.log("Source auth:", {
+    registered: creds.registered,
+    jid: creds.me?.id || null,
+    lid: creds.me?.lid || null,
+    hasAccount: Boolean(creds.account),
+    signalIdentities:
+      creds.signalIdentities?.length || 0,
+    platform: creds.platform || null,
+    fields: Object.keys(creds).sort(),
+  })
+
+  assertBrowserAuthCreds(creds)
+
+  /*
+   * Hapus state lama supaya QR registration
+   * sebelumnya tidak bercampur dengan browser auth.
+   */
+  await deleteRedisSession(sessionId)
+
+  /*
+   * Simpan creds persis seperti hasil bridge.
+   */
+  await writeRedisAuthCreds(
+    sessionId,
+    creds
+  )
+
+  const files =
+    await fs.readdir(authDirectory)
+
+  const grouped = new Map()
+
+  for (const fileName of files) {
+    const detected =
+      detectKeyType(fileName)
+
+    if (!detected) continue
+
+    if (!grouped.has(detected.type)) {
+      grouped.set(detected.type, [])
     }
 
-    const id = withoutExtension.slice(type.length + 1)
-
-    if (!groupedKeys.has(type)) {
-      groupedKeys.set(type, [])
-    }
-
-    groupedKeys.get(type).push(id)
+    grouped
+      .get(detected.type)
+      .push(detected.id)
   }
 
-  let totalImported = 0
+  const redisAuth =
+    await useRedisAuthState(sessionId)
 
-  for (const [type, ids] of groupedKeys.entries()) {
-    const values = await fileAuth.state.keys.get(type, ids)
+  let importedKeys = 0
 
-    if (!values || Object.keys(values).length === 0) {
-      continue
+  for (const [type, ids] of grouped) {
+    const values =
+      await fileAuth.state.keys.get(
+        type,
+        ids
+      )
+
+    const valid = {}
+
+    for (const id of ids) {
+      if (
+        values[id] !== undefined &&
+        values[id] !== null
+      ) {
+        valid[id] = values[id]
+      }
     }
+
+    const count =
+      Object.keys(valid).length
+
+    if (count === 0) continue
 
     await redisAuth.state.keys.set({
-      [type]: values,
+      [type]: valid,
     })
 
-    totalImported += Object.keys(values).length
+    importedKeys += count
 
-    console.log(
-      `Imported ${Object.keys(values).length} key(s) of type ${type}`
-    )
+    console.log({
+      type,
+      count,
+    })
   }
 
   /*
-   * Simpan ulang creds karena proses key import atau middleware
-   * tertentu mungkin melakukan normalisasi.
+   * Verifikasi ulang dari Redis.
    */
-  await redisAuth.saveCreds()
+  const verification =
+    await useRedisAuthState(sessionId)
 
-  console.log('')
-  console.log('Import completed.')
-  console.log(`Registered: ${redisAuth.state.creds.registered}`)
-  console.log(`Signal keys imported: ${totalImported}`)
-  console.log('')
-  console.log(
-    'Sekarang tutup Chrome/WhatsApp Web lalu jalankan bot dengan Redis auth.'
+  assertBrowserAuthCreds(
+    verification.state.creds
   )
+
+  console.log("Redis verification:", {
+    registered:
+      verification.state.creds.registered,
+
+    jid:
+      verification.state.creds.me?.id,
+
+    lid:
+      verification.state.creds.me?.lid,
+
+    hasAccount:
+      Boolean(
+        verification.state.creds.account
+      ),
+
+    signalIdentities:
+      verification.state.creds
+        .signalIdentities?.length || 0,
+
+    platform:
+      verification.state.creds.platform,
+
+    importedKeys,
+  })
+
+  await verification.redis.quit()
 }
 
 main().catch(error => {
-  console.error('Import failed:')
   console.error(error)
   process.exit(1)
 })

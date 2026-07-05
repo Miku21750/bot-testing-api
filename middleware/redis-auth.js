@@ -3,10 +3,13 @@ if (process.env.NODE_ENV !== 'production') {
   dotenv.config()
 }
 
-import baileys from "@whiskeysockets/baileys";
+
 import Redis from "ioredis";
 
-const { BufferJSON, initAuthCreds } = baileys;
+import {
+  BufferJSON,
+  initAuthCreds,
+} from "@whiskeysockets/baileys"  
 
 
 const redisurl = process.env.REDIS_URL + process.env.DB_REDIS_LEVEL
@@ -89,4 +92,25 @@ export async function deleteRedisSession(sessionId) {
   if (keys.length > 0) {
     await redis.del(...keys);
   }
+}
+
+export async function writeRedisAuthCreds(
+  sessionId,
+  creds
+) {
+  if (!sessionId) {
+    throw new Error("sessionId is required")
+  }
+
+  if (!creds || typeof creds !== "object") {
+    throw new Error("creds must be an object")
+  }
+
+  await redis.set(
+    kCreds(sessionId),
+    JSON.stringify(
+      creds,
+      BufferJSON.replacer
+    )
+  )
 }
