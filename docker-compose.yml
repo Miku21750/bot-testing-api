@@ -1,0 +1,29 @@
+services:
+  wa-gateway:
+    build: .
+    container_name: wa-gateway
+    restart: unless-stopped
+    network_mode: host
+    ports:
+      - "3333:3333"
+    env_file:
+      - .env
+    environment:
+      - PORT=3333
+      - WA_SESSION_ID=mainjavag1
+      - DB_REDIS_LEVEL=1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+  wa-gateway-2:
+    build: .
+    container_name: wa-gateway-2
+    restart: unless-stopped
+    network_mode: host
+    ports:
+      - "3334:3333"
+    env_file:
+      - .env1
+    environment:
+      - PORT=3334
+      - WA_SESSION_ID=mainjavag2
+      - DB_REDIS_LEVEL=2

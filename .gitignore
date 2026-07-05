@@ -2,5 +2,6 @@ auth_demo
 node_modules
 download
 .env
-.env
 /baileys_auth
+.env1
+package-lock.json
