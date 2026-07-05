@@ -5,6 +5,8 @@ FROM node:20-slim
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     tzdata \
+    ffmpeg \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Set timezone (optional)

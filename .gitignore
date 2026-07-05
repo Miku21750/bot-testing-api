@@ -3,3 +3,5 @@ node_modules
 download
 .env
 .env
+.env1
+package-lock.json
