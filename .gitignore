@@ -5,3 +5,4 @@ download
 .env
 .env1
 package-lock.json
+/baileys_auth
