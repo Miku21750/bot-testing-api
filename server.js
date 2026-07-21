@@ -86,16 +86,45 @@ app.post('/send-image', requireBearer, async (req, res) => {
     }
 })
 
-app.post('/send-text', requireBearer, async (req, res) => {
-    const {to, text} = req.body || {}
-    if (!to || !text) return res.status(400).json({ok: false, message: 'to and text are required'})
-    
+app.post("/send-text", requireBearer, async (req, res) => {
+    const { to, text } = req.body || {}
+
+    if (!to) {
+        return res.status(400).json({
+            ok: false,
+            error: "to is required"
+        })
+    }
+
+    if (typeof text !== "string" || !text.trim()) {
+        return res.status(400).json({
+            ok: false,
+            error: "text is required"
+        })
+    }
+
     try {
-        const toJID = to.endsWith("@s.whatsapp.net") ? to : to + "@s.whatsapp.net"
-        const result = await sendText(toJID, text)
-        res.json({ok: true, result})
-    } catch (e) {
-        res.status(500).json({ok: false, error: e?.message})
+        const result = await sendText(to, text)
+
+        return res.json({
+            ok: true,
+            result
+        })
+    } catch (error) {
+        const message = error?.message || "Failed to send text"
+
+        const statusCode =
+            message.includes("not connected") ||
+            message.includes("not initialized") ||
+            message.includes("not registered")
+                ? 503
+                : 500
+
+        return res.status(statusCode).json({
+            ok: false,
+            error: message,
+            waStatus: getWAStatus()
+        })
     }
 })
 

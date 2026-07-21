@@ -32,7 +32,7 @@ import { detachAllListeners, hardCloseSocket, onSockEvent } from "./wa-connectio
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
-const mediaStore = new Map()
+const mediaStore = new Map()    
 
 import readline from "readline"
 import pino from "pino"
@@ -483,9 +483,103 @@ export async function reloadWA({ force = false } = {}, bindHandlersFn = bindWAHa
   }
 }
 
-export async function sendText(toJid, text) {
-    if(!sock) throw new Error("Socket not initialized");
-    return await sock.sendMessage(toJid, {text})
+function normalizeWhatsAppJid(target) {
+    if (!target) {
+        throw new Error("Destination is required")
+    }
+
+    const value = String(target).trim()
+
+    // Already a WhatsApp JID
+    if (
+        value.endsWith("@s.whatsapp.net") ||
+        value.endsWith("@g.us") ||
+        value.endsWith("@lid") ||
+        value.endsWith("@broadcast")
+    ) {
+        return value
+    }
+
+    // Remove +, spaces, dashes, brackets, etc.
+    const phone = value.replace(/\D/g, "")
+
+    if (!phone) {
+        throw new Error("Invalid WhatsApp destination")
+    }
+
+    return `${phone}@s.whatsapp.net`
+}
+
+function assertSocketReady() {
+    if (!sock) {
+        throw new Error("WhatsApp socket is not initialized")
+    }
+
+    if (connectionState !== "open") {
+        throw new Error(
+            `WhatsApp socket is not connected. Current state: ${connectionState}`
+        )
+    }
+
+    if (!sock.authState?.creds?.registered) {
+        throw new Error("WhatsApp session is not registered")
+    }
+}
+
+export async function sendText(to, text, options = {}) {
+    assertSocketReady()
+
+    if (typeof text !== "string" || !text.trim()) {
+        throw new Error("Text message cannot be empty")
+    }
+
+    const jid = normalizeWhatsAppJid(to)
+
+    try {
+        const result = await sock.sendMessage(
+            jid,
+            {
+                text: text.trim(),
+                ...(options.contextInfo
+                    ? { contextInfo: options.contextInfo }
+                    : {})
+            },
+            options.quoted
+                ? {
+                    quoted: options.quoted
+                }
+                : undefined
+        )
+
+        logger.info(
+            {
+                jid,
+                messageId: result?.key?.id
+            },
+            "Text message sent"
+        )
+
+        return {
+            jid,
+            messageId: result?.key?.id || null,
+            key: result?.key || null,
+            message: result?.message || null
+        }
+    } catch (error) {
+        logger.error(
+            {
+                jid,
+                connectionState,
+                registered: !!sock?.authState?.creds?.registered,
+                error: safeJson(error)
+            },
+            "Failed to send text message"
+        )
+
+        throw new Error(
+            error?.message || "Failed to send WhatsApp text message"
+        )
+    }
 }
 export async function sendTyping(toJid) {
     if(!sock) throw new Error("Socket not initialized");
