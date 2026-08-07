@@ -10,10 +10,7 @@ import P from "pino"
 import axios from "axios"
 import QRCode from "qrcode"
 
-import baileys from "@whiskeysockets/baileys"
-
-const {
-  default: makeWASocket,
+import makeWASocket, {
   DisconnectReason,
   downloadMediaMessage,
   downloadContentFromMessage,
@@ -22,7 +19,7 @@ const {
   fetchLatestBaileysVersion,
   Browsers,
   proto
-} = baileys
+} from "baileys" 
 import { extractMediaInfo } from "./helpers/wa-media-helpers.js"
 import { useRedisAuthState, deleteRedisSession } from "./middleware/redis-auth.js"
 import { downloadMessageMediaBuffer, storeMediaMessage } from "./helpers/media-store.js"

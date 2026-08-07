@@ -1,10 +1,9 @@
-import baileys from "@whiskeysockets/baileys";
-const {
+import {
   downloadMediaMessage,
   downloadContentFromMessage,
   proto,
   BufferJSON
-} = baileys;
+} from "baileys";
 
 export async function downloadMessageMediaBuffer(webMessageInfo, timeoutMs = 20000) {
     const downloadPromise = downloadMediaMessage(webMessageInfo, "buffer", {})

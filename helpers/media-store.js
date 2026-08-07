@@ -2,10 +2,14 @@ if (process.env.NODE_ENV !== 'production') {
   const dotenv = await import('dotenv')
   dotenv.config()
 }
-import baileys from "@whiskeysockets/baileys";
 import Redis from "ioredis";
 
-const { proto, downloadContentFromMessage  } = baileys;
+import {
+  downloadMediaMessage,
+  downloadContentFromMessage,
+  proto,
+  BufferJSON
+} from "baileys";
 const redisurl = process.env.REDIS_URL + process.env.DB_REDIS_LEVEL
 const redis = new Redis(redisurl)
 

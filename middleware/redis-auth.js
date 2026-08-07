@@ -3,10 +3,9 @@ if (process.env.NODE_ENV !== 'production') {
   dotenv.config()
 }
 
-import baileys from "@whiskeysockets/baileys";
 import Redis from "ioredis";
 
-const { BufferJSON, initAuthCreds } = baileys;
+import { BufferJSON, initAuthCreds } from "baileys";
 
 
 const redisurl = process.env.REDIS_URL + process.env.DB_REDIS_LEVEL

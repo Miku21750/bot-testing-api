@@ -1,10 +1,10 @@
-import baileys from "@whiskeysockets/baileys";
-const {
+
+import {
   downloadMediaMessage,
   downloadContentFromMessage,
   proto,
   BufferJSON
-} = baileys;
+} from "baileys";
 
 export function extractMediaInfo(webMessage) {
     const perid = webMessage?.message
