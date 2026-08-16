@@ -6,7 +6,7 @@ if (process.env.NODE_ENV !== 'production') {
 
 import express from 'express'
 import multer from 'multer'
-import { beginPairing, bindWAHandlers, getLatestQRAsTerminal, getMediaMessage, getSocket, getWAStatus, reloadWA, requestPairingCode, sendAvailable, sendText, sendTyping, startWA, unpairWA  } from './wa.js'
+import { beginPairing, bindWAHandlers, fetchOlderHistory, getLatestQRAsTerminal, getMediaMessage, getSocket, getWAStatus, reloadWA, requestPairingCode, sendAvailable, sendText, sendTyping, startWA, unpairWA  } from './wa.js'
 import path from "path"
 import {
   downloadMediaMessage,
@@ -17,6 +17,7 @@ import {
 import { requireBearer } from "./middleware/auth-http.js"
 import { loadMediaMessage } from "./helpers/media-store.js"
 import { downloadMessageMediaBuffer, getAudioNode } from './helpers/wa-download-media.js'
+import { buildAIContext, listHistoryMessages } from './helpers/history-store.js'
 
 const app = express()
 const upload = multer()
@@ -261,6 +262,53 @@ app.get("/media/audio-base64/:messageId", async (req, res) => {
         })
     }
 })
+
+app.get("/history/:jid", requireBearer, async (req, res) => {
+    try {
+        const result = await listHistoryMessages(
+            process.env.WA_SESSION_ID || "main",
+            req.params.jid,
+            {
+                limit: req.query.limit,
+                before: req.query.before,
+                includeRaw: req.query.includeRaw === "true",
+            },
+        )
+        return res.json({ ok: true, ...result })
+    } catch (error) {
+        return res.status(400).json({ ok: false, error: error?.message || "Failed to load history" })
+    }
+})
+
+app.get("/history/:jid/ai-context", requireBearer, async (req, res) => {
+    try {
+        const result = await buildAIContext(
+            process.env.WA_SESSION_ID || "main",
+            req.params.jid,
+            { limit: req.query.limit },
+        )
+        return res.json({ ok: true, ...result })
+    } catch (error) {
+        return res.status(400).json({ ok: false, error: error?.message || "Failed to build AI context" })
+    }
+})
+
+app.post("/wa/history/fetch", requireBearer, async (req, res) => {
+    try {
+        const result = await fetchOlderHistory(req.body || {})
+        return res.status(202).json({
+            ok: true,
+            accepted: true,
+            message: "History request sent; results will arrive asynchronously",
+            ...result,
+        })
+    } catch (error) {
+        const message = error?.message || "Failed to request older history"
+        const status = message.includes("not connected") || message.includes("not initialized") ? 503 : 400
+        return res.status(status).json({ ok: false, error: message })
+    }
+})
+
 app.use('/download', express.static(path.resolve('./download')))
 
 

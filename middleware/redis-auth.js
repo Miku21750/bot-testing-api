@@ -21,6 +21,10 @@ const redis = new Redis(redisurl, {
   }
 });
 
+export function getRedisClient() {
+  return redis
+}
+
 redis.on("connect", () => {
   console.log("[Redis] connected");
 });

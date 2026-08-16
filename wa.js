@@ -24,6 +24,12 @@ import { extractMediaInfo } from "./helpers/wa-media-helpers.js"
 import { useRedisAuthState, deleteRedisSession } from "./middleware/redis-auth.js"
 import { downloadMessageMediaBuffer, storeMediaMessage } from "./helpers/media-store.js"
 import { detachAllListeners, hardCloseSocket, onSockEvent } from "./wa-connection.js"
+import {
+  getMessageContent,
+  getOldestStoredMessage,
+  persistHistoryPayload,
+  persistMessages,
+} from "./helpers/history-store.js"
 
 
 const __filename = fileURLToPath(import.meta.url)
@@ -294,6 +300,12 @@ export function bindWAHandlers(sock) {
     });
 
     onSockEvent(sock, "messages.upsert", async ({ type, messages }) => {
+        try {
+            await persistMessages(sessionIdActive, messages)
+        } catch (error) {
+            logger.error({ err: safeJson(error) }, "Failed to persist realtime messages")
+        }
+
         for (const m of messages) {
             if (!m?.message) continue;
             const fromMe = m.key?.fromMe;
@@ -358,6 +370,16 @@ export function bindWAHandlers(sock) {
         }
     });
 
+    onSockEvent(sock, "messaging-history.set", async ({ chats, contacts, messages, syncType, progress, isLatest }) => {
+        try {
+            const stored = await persistHistoryPayload(sessionIdActive, { chats, contacts, messages })
+            logger.info({ syncType, progress, isLatest, stored }, "WhatsApp history persisted")
+            await postWebhook("messaging-history.set", { syncType, progress, isLatest, stored })
+        } catch (error) {
+            logger.error({ err: safeJson(error), syncType }, "Failed to persist WhatsApp history")
+        }
+    })
+
     // Optional events (enable as needed)
     // onSockEvent(sock, "messages.update", async (updates) => postWebhook("messages.update", updates));
     // onSockEvent(sock, "messages.delete", async (item) => postWebhook("messages.delete", item));
@@ -384,7 +406,10 @@ export async function startWA(
 
   sock = makeWASocket({
     printQRInTerminal: !usePairingCode,
-    syncFullHistory: true,
+    // browser: Browsers.macOS("Desktop"),
+    syncFullHistory: process.env.WA_SYNC_FULL_HISTORY !== "false",
+    shouldSyncHistoryMessage: () => process.env.WA_HISTORY_SYNC_ENABLED !== "false",
+    getMessage: key => getMessageContent(sessionId, key),
     markOnlineOnConnect: true,
     connectTimeoutMs: 60000,
     defaultQueryTimeoutMs: 0,
@@ -412,7 +437,7 @@ export async function startWA(
 
         return message;
     },
-    version: [99963, 950125916, 0],
+    // version: [99963, 950125916, 0],
     logger: pino({
         level: 'silent' // Set 'fatal' for production
     }),
@@ -679,6 +704,30 @@ export async function resendMedia(toJid, webMessageInfo, overrideCaption = null)
 }
 export function getSocket(){
     return sock
+}
+
+export async function fetchOlderHistory({ jid, count = 50, oldestMsgKey, oldestMsgTimestamp } = {}) {
+    assertSocketReady()
+
+    const safeCount = Math.min(Math.max(Number(count) || 50, 1), 500)
+    let key = oldestMsgKey
+    let timestamp = oldestMsgTimestamp
+
+    if (!key || timestamp == null) {
+        const oldest = await getOldestStoredMessage(sessionIdActive, jid)
+        if (!oldest) {
+            throw new Error("No stored message found for this jid; provide oldestMsgKey and oldestMsgTimestamp")
+        }
+        key = oldest.raw?.key
+        timestamp = oldest.raw?.messageTimestamp
+    }
+
+    if (!key?.id || !key?.remoteJid || timestamp == null) {
+        throw new Error("Invalid oldest message cursor")
+    }
+
+    const requestId = await sock.fetchMessageHistory(safeCount, key, timestamp)
+    return { requestId, count: safeCount, oldestMsgKey: key, oldestMsgTimestamp: timestamp }
 }
 
 export async function unpairWA() {
