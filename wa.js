@@ -308,8 +308,8 @@ export function bindWAHandlers(sock) {
 
         for (const m of messages) {
             if (!m?.message) continue;
-            const fromMe = m.key?.fromMe;
-            if (fromMe) continue;
+            const fromMe = m.key?.fromMe === true;
+            const direction = fromMe ? "outgoing" : "incoming";
 
             const msgType = Object.keys(m.message || {})[0] || "unknown";
             const text = m.message?.conversation || m.message?.extendedTextMessage?.text || null;
@@ -322,13 +322,17 @@ export function bindWAHandlers(sock) {
                 m.message?.stickerMessage
             );
 
+            const webhookEvent = fromMe ? "messages.sent" : "messages.upsert";
             if (hasMedia) {
                 // auto download media
                 await storeMediaMessage(m.key?.id, m, 600);
                 const mediaInfo = extractMediaInfo(m);
                 if (mediaInfo) {
                     rememberMediaMessage(m);
-                    await postWebhook("media.received", {
+                    await postWebhook(fromMe ? "media.sent" : "media.received", {
+                        upsertType:type,
+                        direction,
+                        fromMe,
                         remoteJid: m.key?.remoteJidAlt ?? m.key?.remoteJid,
                         messageId: m.key?.id,
                         mkey: m.key,
@@ -355,8 +359,9 @@ export function bindWAHandlers(sock) {
                 continue;
             }
 
-            await postWebhook("messages.upsert", {
+            await postWebhook(webhookEvent, {
                 upsertType: type,
+                direction,
                 remoteJid: m.key?.remoteJidAlt ?? m.key?.remoteJid,
                 mkey: m.key,
                 fromMe,
